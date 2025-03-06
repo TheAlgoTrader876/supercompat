@@ -1,4 +1,4 @@
-import OpenAI, { AzureOpenAI } from 'openai'
+import { AzureOpenAI } from 'openai'
 import { NextResponse } from 'next/server'
 import {
   supercompat,
@@ -24,14 +24,14 @@ const tools = [
       },
     }
   }
-] as OpenAI.Beta.AssistantTool[]
+]
 
 export const GET = async () => {
   const client = supercompat({
     client: azureOpenaiClientAdapter({
       azureOpenai: new AzureOpenAI({
         endpoint: process.env.EXAMPLE_AZURE_OPENAI_ENDPOINT,
-        apiVersion: '2024-09-01-preview',
+        apiVersion: '2024-11-20',
         fetch: (url: RequestInfo, init?: RequestInit): Promise<Response> => (
           fetch(url, {
             ...(init || {}),
@@ -44,41 +44,41 @@ export const GET = async () => {
     }),
   })
 
-  const assistantId = 'asst_ZrKBc3znUGrm6L0cKzSpfqXG'
+  const agentId = 'agent_ZrKBc3znUGrm6L0cKzSpfqXG'
 
-  const thread = await client.beta.threads.create({
-    messages: [],
+  // Create a conversation
+  const conversation = await client.agents.conversations.create({
+    agentId: agentId,
     metadata: {
-      assistantId,
-    },
+      userContext: 'weather_query'
+    }
   })
 
-  await client.beta.threads.messages.create(thread.id, {
+  // Add message to conversation
+  await client.agents.conversations.messages.create(conversation.id, {
     role: 'user',
     content: 'What is the weather in SF?'
   })
 
-  const run = await client.beta.threads.runs.create(
-    thread.id,
+  // Start the agent run
+  const run = await client.agents.conversations.runs.create(
+    conversation.id,
     {
-      assistant_id: assistantId,
+      agent_id: agentId,
       instructions: 'Use the get_current_weather and then answer the message.',
-      model: 'gpt-4o-mini',
       stream: true,
       tools,
-      truncation_strategy: {
-        type: 'last_messages',
-        last_messages: 10,
-      },
-    },
+      configuration: {
+        message_history_limit: 10
+      }
+    }
   )
 
   let requiresActionEvent
-
   let lastEvent
 
   for await (const event of run) {
-    if (event.event === 'thread.run.requires_action') {
+    if (event.type === 'agent_action_required') {
       requiresActionEvent = event
     }
     lastEvent = event
@@ -86,14 +86,14 @@ export const GET = async () => {
 
   if (!requiresActionEvent) {
     console.dir({ lastEvent }, { depth: null })
-    throw new Error('No requires action event')
+    throw new Error('No action required event')
   }
 
-  const toolCallId = requiresActionEvent.data.required_action?.submit_tool_outputs.tool_calls[0].id
-
-  const submitToolOutputsRun = await client.beta.threads.runs.submitToolOutputs(
-    thread.id,
-    requiresActionEvent.data.id,
+  const toolCallId = requiresActionEvent.data.action.tool_calls[0].id
+  
+  const submitToolOutputsRun = await client.agents.conversations.runs.submitToolOutputs(
+    conversation.id,
+    requiresActionEvent.data.run_id,
     {
       stream: true,
       tool_outputs: [
@@ -108,9 +108,12 @@ export const GET = async () => {
   for await (const _event of submitToolOutputsRun) {
   }
 
-  const threadMessages = await client.beta.threads.messages.list(thread.id, { limit: 10 })
+  // Get conversation messages
+  const messages = await client.agents.conversations.messages.list(conversation.id, { 
+    limit: 10 
+  })
 
   return NextResponse.json({
-    threadMessages,
+    messages,
   })
 }

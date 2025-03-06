@@ -3,10 +3,7 @@ import { NextResponse } from 'next/server'
 import {
   supercompat,
   azureOpenaiClientAdapter,
-  prismaStorageAdapter,
-  completionsRunAdapter,
 } from 'supercompat'
-import { prisma } from '@/lib/prisma'
 
 const tools = [
   {
@@ -35,15 +32,19 @@ export const GET = async () => {
       azureOpenai: new AzureOpenAI({
         endpoint: process.env.EXAMPLE_AZURE_OPENAI_ENDPOINT,
         apiVersion: '2024-09-01-preview',
+        fetch: (url: RequestInfo, init?: RequestInit): Promise<Response> => (
+          fetch(url, {
+            ...(init || {}),
+            cache: 'no-store',
+            // @ts-ignore-next-line
+            duplex: 'half',
+          })
+        ),
       }),
     }),
-    storage: prismaStorageAdapter({
-      prisma,
-    }),
-    runAdapter: completionsRunAdapter(),
   })
 
-  const assistantId = 'b7fd7a65-3504-4ad3-95a0-b83a8eaff0f3'
+  const assistantId = 'asst_ZrKBc3znUGrm6L0cKzSpfqXG'
 
   const thread = await client.beta.threads.create({
     messages: [],
@@ -74,13 +75,17 @@ export const GET = async () => {
 
   let requiresActionEvent
 
+  let lastEvent
+
   for await (const event of run) {
     if (event.event === 'thread.run.requires_action') {
       requiresActionEvent = event
     }
+    lastEvent = event
   }
 
   if (!requiresActionEvent) {
+    console.dir({ lastEvent }, { depth: null })
     throw new Error('No requires action event')
   }
 
